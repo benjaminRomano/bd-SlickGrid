@@ -1,6 +1,23 @@
-# Welcome to SlickGrid
+# slickgrid
 
 For now, please check out [the wiki](https://github.com/mleibman/SlickGrid/wiki).
+
+## require notes
+
+Unlike typical modules you cannot ```require('slickgrid')``` directly. You should require the specific submodules you need.
+
+```js
+var SlickGrid = require('slickgrid/grid');
+var SlickData = require('slickgrid/dataview');
+```
+
+## install
+
+```
+npm install slickgrid
+```
+
+Use with [browserify](http://browserify.org)
 
 ## SlickGrid is an advanced JavaScript grid/spreadsheet component
 
