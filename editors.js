@@ -11,7 +11,6 @@
       "Editors": {
         "Text": TextEditor,
         "Integer": IntegerEditor,
-		"Float": FloatEditor,
         "Date": DateEditor,
         "YesNoSelect": YesNoSelectEditor,
         "Checkbox": CheckboxEditor,
@@ -151,96 +150,6 @@
 
     this.init();
   }
-
-  function FloatEditor(args) {
-    var $input;
-    var defaultValue;
-    var scope = this;
-
-    this.init = function () {
-      $input = $("<INPUT type=text class='editor-text' />");
-
-      $input.bind("keydown.nav", function (e) {
-        if (e.keyCode === $.ui.keyCode.LEFT || e.keyCode === $.ui.keyCode.RIGHT) {
-          e.stopImmediatePropagation();
-        }
-      });
-
-      $input.appendTo(args.container);
-      $input.focus().select();
-    };
-
-    this.destroy = function () {
-      $input.remove();
-    };
-
-    this.focus = function () {
-      $input.focus();
-    };
-
-	function getDecimalPlaces() {
-		// returns the number of fixed decimal places or null
-		var rtn = args.column.editorFixedDecimalPlaces;
-		if (typeof rtn == 'undefined') {
-			rtn = FloatEditor.DefaultDecimalPlaces;
-		}
-		return (!rtn && rtn!==0 ? null : rtn);
-	}
-
-    this.loadValue = function (item) {
-      defaultValue = item[args.column.field];
-
-	  var decPlaces = getDecimalPlaces();
-	  if (decPlaces !== null
-	  && (defaultValue || defaultValue===0)
-	  && defaultValue.toFixed) {
-		defaultValue = defaultValue.toFixed(decPlaces);
-	  }
-
-      $input.val(defaultValue);
-      $input[0].defaultValue = defaultValue;
-      $input.select();
-    };
-
-    this.serializeValue = function () {
-	  var rtn = parseFloat($input.val()) || 0;
-
-	  var decPlaces = getDecimalPlaces();
-	  if (decPlaces !== null
-	  && (rtn || rtn===0)
-	  && rtn.toFixed) {
-		rtn = parseFloat(rtn.toFixed(decPlaces));
-	  }
-
-      return rtn;
-    };
-
-    this.applyValue = function (item, state) {
-      item[args.column.field] = state;
-    };
-
-    this.isValueChanged = function () {
-      return (!($input.val() == "" && defaultValue == null)) && ($input.val() != defaultValue);
-    };
-
-    this.validate = function () {
-      if (isNaN($input.val())) {
-        return {
-          valid: false,
-          msg: "Please enter a valid number"
-        };
-      }
-
-      return {
-        valid: true,
-        msg: null
-      };
-    };
-
-    this.init();
-  }
-
-  FloatEditor.DefaultDecimalPlaces = null;
 
   function DateEditor(args) {
     var $input;
@@ -393,16 +302,16 @@
     };
 
     this.loadValue = function (item) {
-      defaultValue = !!item[args.column.field];
+      defaultValue = item[args.column.field];
       if (defaultValue) {
-        $select.prop('checked', true);
+        $select.attr("checked", "checked");
       } else {
-        $select.prop('checked', false);
+        $select.removeAttr("checked");
       }
     };
 
     this.serializeValue = function () {
-      return $select.prop('checked');
+      return $select.attr("checked");
     };
 
     this.applyValue = function (item, state) {
@@ -410,7 +319,7 @@
     };
 
     this.isValueChanged = function () {
-      return (this.serializeValue() !== defaultValue);
+      return ($select.attr("checked") != defaultValue);
     };
 
     this.validate = function () {

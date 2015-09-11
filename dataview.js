@@ -2,11 +2,11 @@
 
   module.exports = {
     DataView: DataView,
-      Aggregators: {
-        Avg: AvgAggregator,
-        Min: MinAggregator,
-        Max: MaxAggregator,
-        Sum: SumAggregator
+    Aggregators: {
+      Avg: AvgAggregator,
+      Min: MinAggregator,
+      Max: MaxAggregator,
+      Sum: SumAggregator
     }
   };
 
@@ -61,27 +61,15 @@
     var filterCache = [];
 
     // grouping
-    var groupingInfoDefaults = {
-      getter: null,
-      formatter: null,
-      comparer: function(a, b) {
-        return (a.value === b.value ? 0 :
-          (a.value > b.value ? 1 : -1)
-        );
-      },
-      predefinedValues: [],
-      aggregators: [],
-      aggregateEmpty: false,
-      aggregateCollapsed: false,
-      aggregateChildGroups: false,
-      collapsed: false,
-      displayTotalsRow: true,
-      lazyTotalsCalculation: false
-    };
-    var groupingInfos = [];
+    var groupingGetter;
+    var groupingGetterIsAFn;
+    var groupingFormatter;
+    var groupingComparer;
     var groups = [];
-    var toggledGroupsByLevel = [];
-    var groupingDelimiter = ':|:';
+    var collapsedGroups = {};
+    var aggregators;
+    var aggregateCollapsed = false;
+    var compiledAccumulators;
 
     var pagesize = 0;
     var pagenum = 0;
@@ -166,7 +154,7 @@
 
     function getPagingInfo() {
       var totalPages = pagesize ? Math.max(1, Math.ceil(totalRows / pagesize)) : 1;
-      return {pageSize: pagesize, pageNum: pagenum, totalRows: totalRows, totalPages: totalPages, dataView: self};
+      return {pageSize: pagesize, pageNum: pagenum, totalRows: totalRows, totalPages: totalPages};
     }
 
     function sort(comparer, ascending) {
@@ -230,65 +218,33 @@
       refresh();
     }
 
-    function getGrouping() {
-      return groupingInfos;
-    }
-
-    function setGrouping(groupingInfo) {
+    function groupBy(valueGetter, valueFormatter, sortComparer) {
       if (!options.groupItemMetadataProvider) {
         options.groupItemMetadataProvider = new Slick.Data.GroupItemMetadataProvider();
       }
 
+      groupingGetter = valueGetter;
+      groupingGetterIsAFn = typeof groupingGetter === "function";
+      groupingFormatter = valueFormatter;
+      groupingComparer = sortComparer;
+      collapsedGroups = {};
       groups = [];
-      toggledGroupsByLevel = [];
-      groupingInfo = groupingInfo || [];
-      groupingInfos = (groupingInfo instanceof Array) ? groupingInfo : [groupingInfo];
-
-      for (var i = 0; i < groupingInfos.length; i++) {
-        var gi = groupingInfos[i] = $.extend(true, {}, groupingInfoDefaults, groupingInfos[i]);
-        gi.getterIsAFn = typeof gi.getter === "function";
-
-        // pre-compile accumulator loops
-        gi.compiledAccumulators = [];
-        var idx = gi.aggregators.length;
-        while (idx--) {
-          gi.compiledAccumulators[idx] = compileAccumulatorLoop(gi.aggregators[idx]);
-        }
-
-        toggledGroupsByLevel[i] = {};
-      }
-
       refresh();
     }
 
-    /**
-     * @deprecated Please use {@link setGrouping}.
-     */
-    function groupBy(valueGetter, valueFormatter, sortComparer) {
-      if (valueGetter == null) {
-        setGrouping([]);
-        return;
-      }
-
-      setGrouping({
-        getter: valueGetter,
-        formatter: valueFormatter,
-        comparer: sortComparer
-      });
-    }
-
-    /**
-     * @deprecated Please use {@link setGrouping}.
-     */
     function setAggregators(groupAggregators, includeCollapsed) {
-      if (!groupingInfos.length) {
-        throw new Error("At least one grouping must be specified before calling setAggregators().");
+      aggregators = groupAggregators;
+      aggregateCollapsed = (includeCollapsed !== undefined)
+          ? includeCollapsed : aggregateCollapsed;
+
+      // pre-compile accumulator loops
+      compiledAccumulators = [];
+      var idx = aggregators.length;
+      while (idx--) {
+        compiledAccumulators[idx] = compileAccumulatorLoop(aggregators[idx]);
       }
 
-      groupingInfos[0].aggregators = groupAggregators;
-      groupingInfos[0].aggregateCollapsed = includeCollapsed;
-
-      setGrouping(groupingInfos);
+      refresh();
     }
 
     function getItemByIdx(i) {
@@ -320,7 +276,7 @@
     function mapIdsToRows(idArray) {
       var rows = [];
       ensureRowsByIdCache();
-      for (var i = 0, l = idArray.length; i < l; i++) {
+      for (var i = 0; i < idArray.length; i++) {
         var row = rowsById[idArray[i]];
         if (row != null) {
           rows[rows.length] = row;
@@ -331,7 +287,7 @@
 
     function mapRowsToIds(rowArray) {
       var ids = [];
-      for (var i = 0, l = rowArray.length; i < l; i++) {
+      for (var i = 0; i < rowArray.length; i++) {
         if (rowArray[i] < rows.length) {
           ids[ids.length] = rows[rowArray[i]][idProperty];
         }
@@ -379,22 +335,7 @@
     }
 
     function getItem(i) {
-      var item = rows[i];
-
-      // if this is a group row, make sure totals are calculated and update the title
-      if (item && item.__group && item.totals && !item.totals.initialized) {
-        var gi = groupingInfos[item.level];
-        if (!gi.displayTotalsRow) {
-          calculateTotals(item.totals);
-          item.title = gi.formatter ? gi.formatter(item) : item.value;
-        }
-      }
-      // if this is a totals row, make sure it's calculated
-      else if (item && item.__groupTotals && !item.initialized) {
-        calculateTotals(item);
-      }
-
-      return item;
+      return rows[i];
     }
 
     function getItemMetadata(i) {
@@ -403,7 +344,7 @@
         return null;
       }
 
-      // overrides for grouping rows
+      // overrides for group rows
       if (item.__group) {
         return options.groupItemMetadataProvider.getGroupRowMetadata(item);
       }
@@ -416,105 +357,37 @@
       return null;
     }
 
-    function expandCollapseAllGroups(level, collapse) {
-      if (level == null) {
-        for (var i = 0; i < groupingInfos.length; i++) {
-          toggledGroupsByLevel[i] = {};
-          groupingInfos[i].collapsed = collapse;
-        }
-      } else {
-        toggledGroupsByLevel[level] = {};
-        groupingInfos[level].collapsed = collapse;
-      }
+    function collapseGroup(groupingValue) {
+      collapsedGroups[groupingValue] = true;
       refresh();
     }
 
-    /**
-     * @param level {Number} Optional level to collapse.  If not specified, applies to all levels.
-     */
-    function collapseAllGroups(level) {
-      expandCollapseAllGroups(level, true);
-    }
-
-    /**
-     * @param level {Number} Optional level to expand.  If not specified, applies to all levels.
-     */
-    function expandAllGroups(level) {
-      expandCollapseAllGroups(level, false);
-    }
-
-    function expandCollapseGroup(level, groupingKey, collapse) {
-      toggledGroupsByLevel[level][groupingKey] = groupingInfos[level].collapsed ^ collapse;
+    function expandGroup(groupingValue) {
+      delete collapsedGroups[groupingValue];
       refresh();
-    }
-
-    /**
-     * @param varArgs Either a Slick.Group's "groupingKey" property, or a
-     *     variable argument list of grouping values denoting a unique path to the row.  For
-     *     example, calling collapseGroup('high', '10%') will collapse the '10%' subgroup of
-     *     the 'high' group.
-     */
-    function collapseGroup(varArgs) {
-      var args = Array.prototype.slice.call(arguments);
-      var arg0 = args[0];
-      if (args.length == 1 && arg0.indexOf(groupingDelimiter) != -1) {
-        expandCollapseGroup(arg0.split(groupingDelimiter).length - 1, arg0, true);
-      } else {
-        expandCollapseGroup(args.length - 1, args.join(groupingDelimiter), true);
-      }
-    }
-
-    /**
-     * @param varArgs Either a Slick.Group's "groupingKey" property, or a
-     *     variable argument list of grouping values denoting a unique path to the row.  For
-     *     example, calling expandGroup('high', '10%') will expand the '10%' subgroup of
-     *     the 'high' group.
-     */
-    function expandGroup(varArgs) {
-      var args = Array.prototype.slice.call(arguments);
-      var arg0 = args[0];
-      if (args.length == 1 && arg0.indexOf(groupingDelimiter) != -1) {
-        expandCollapseGroup(arg0.split(groupingDelimiter).length - 1, arg0, false);
-      } else {
-        expandCollapseGroup(args.length - 1, args.join(groupingDelimiter), false);
-      }
     }
 
     function getGroups() {
       return groups;
     }
 
-    function extractGroups(rows, parentGroup) {
+    function extractGroups(rows) {
       var group;
       var val;
       var groups = [];
-      var groupsByVal = {};
+      var groupsByVal = [];
       var r;
-      var level = parentGroup ? parentGroup.level + 1 : 0;
-      var gi = groupingInfos[level];
-
-      for (var i = 0, l = gi.predefinedValues.length; i < l; i++) {
-        val = gi.predefinedValues[i];
-        group = groupsByVal[val];
-        if (!group) {
-          group = new Slick.Group();
-          group.value = val;
-          group.level = level;
-          group.groupingKey = (parentGroup ? parentGroup.groupingKey + groupingDelimiter : '') + val;
-          groups[groups.length] = group;
-          groupsByVal[val] = group;
-        }
-      }
 
       for (var i = 0, l = rows.length; i < l; i++) {
         r = rows[i];
-        val = gi.getterIsAFn ? gi.getter(r) : r[gi.getter];
+        val = (groupingGetterIsAFn) ? groupingGetter(r) : r[groupingGetter];
+        val = val || 0;
         group = groupsByVal[val];
         if (!group) {
           group = new Slick.Group();
+          group.count = 0;
           group.value = val;
-          group.level = level;
-          group.groupingKey = (parentGroup ? parentGroup.groupingKey + groupingDelimiter : '') + val;
+          group.rows = [];
           groups[groups.length] = group;
           groupsByVal[val] = group;
         }
@@ -522,101 +395,57 @@
         group.rows[group.count++] = r;
       }
 
-      if (level < groupingInfos.length - 1) {
-        for (var i = 0; i < groups.length; i++) {
-          group = groups[i];
-          group.groups = extractGroups(group.rows, group);
-        }
-      }
-
-      groups.sort(groupingInfos[level].comparer);
-
       return groups;
     }
 
-    function calculateTotals(totals) {
-      var group = totals.group;
-      var gi = groupingInfos[group.level];
-      var isLeafLevel = (group.level == groupingInfos.length);
-      var agg, idx = gi.aggregators.length;
-
-      if (!isLeafLevel && gi.aggregateChildGroups) {
-        // make sure all the subgroups are calculated
-        var i = group.groups.length;
-        while (i--) {
-          if (!group.groups[i].totals.initialized) {
-            calculateTotals(group.groups[i].totals);
-          }
-        }
+    // TODO:  lazy totals calculation
+    function calculateGroupTotals(group) {
+      if (group.collapsed && !aggregateCollapsed) {
+        return;
       }
 
+      // TODO:  try moving iterating over groups into compiled accumulator
+      var totals = new Slick.GroupTotals();
+      var agg, idx = aggregators.length;
       while (idx--) {
-        agg = gi.aggregators[idx];
+        agg = aggregators[idx];
         agg.init();
-        if (!isLeafLevel && gi.aggregateChildGroups) {
-          gi.compiledAccumulators[idx].call(agg, group.groups);
-        } else {
-          gi.compiledAccumulators[idx].call(agg, group.rows);
-        }
+        compiledAccumulators[idx].call(agg, group.rows);
         agg.storeResult(totals);
       }
-      totals.initialized = true;
-    }
-
-    function addGroupTotals(group) {
-      var gi = groupingInfos[group.level];
-      var totals = new Slick.GroupTotals();
       totals.group = group;
       group.totals = totals;
-      if (!gi.lazyTotalsCalculation) {
-        calculateTotals(totals);
+    }
+
+    function calculateTotals(groups) {
+      var idx = groups.length;
+      while (idx--) {
+        calculateGroupTotals(groups[idx]);
       }
     }
 
-    function addTotals(groups, level) {
-      level = level || 0;
-      var gi = groupingInfos[level];
-      var groupCollapsed = gi.collapsed;
-      var toggledGroups = toggledGroupsByLevel[level];
+    function finalizeGroups(groups) {
       var idx = groups.length, g;
       while (idx--) {
         g = groups[idx];
-
-        if (g.collapsed && !gi.aggregateCollapsed) {
-          continue;
-        }
-
-        // Do a depth-first aggregation so that parent group aggregators can access subgroup totals.
-        if (g.groups) {
-          addTotals(g.groups, level + 1);
-        }
-
-        if (gi.aggregators.length && (
-            gi.aggregateEmpty || g.rows.length || (g.groups && g.groups.length))) {
-          addGroupTotals(g);
-        }
-
-        g.collapsed = groupCollapsed ^ toggledGroups[g.groupingKey];
-        g.title = gi.formatter ? gi.formatter(g) : g.value;
+        g.collapsed = (g.value in collapsedGroups);
+        g.title = groupingFormatter ? groupingFormatter(g) : g.value;
       }
     }
 
-    function flattenGroupedRows(groups, level) {
-      level = level || 0;
-      var gi = groupingInfos[level];
-      var groupedRows = [], rows, gl = 0, g;
+    function flattenGroupedRows(groups) {
+      var groupedRows = [], gl = 0, g;
       for (var i = 0, l = groups.length; i < l; i++) {
         g = groups[i];
         groupedRows[gl++] = g;
 
         if (!g.collapsed) {
-          rows = g.groups ? flattenGroupedRows(g.groups, level + 1) : g.rows;
-          for (var j = 0, jj = rows.length; j < jj; j++) {
-            groupedRows[gl++] = rows[j];
+          for (var j = 0, jj = g.rows.length; j < jj; j++) {
+            groupedRows[gl++] = g.rows[j];
           }
         }
 
-        if (g.totals && gi.displayTotalsRow && (!g.collapsed || gi.aggregateCollapsed)) {
+        if (g.totals && (!g.collapsed || aggregateCollapsed)) {
           groupedRows[gl++] = g.totals;
         }
       }
@@ -639,7 +468,7 @@
           "for (var " + accumulatorInfo.params[0] + ", _i=0, _il=_items.length; _i<_il; _i++) {" +
               accumulatorInfo.params[0] + " = _items[_i]; " +
               accumulatorInfo.body +
-          "}"
+              "}"
       );
       fn.displayName = fn.name = "compiledAccumulatorLoop";
       return fn;
@@ -648,16 +477,11 @@
     function compileFilter() {
       var filterInfo = getFunctionInfo(filter);
 
-      var filterPath1 = "{ continue _coreloop; }$1";
-      var filterPath2 = "{ _retval[_idx++] = $item$; continue _coreloop; }$1";
-      // make some allowances for minification - there's only so far we can go with RegEx
       var filterBody = filterInfo.body
-          .replace(/return false\s*([;}]|\}|$)/gi, filterPath1)
-          .replace(/return!1([;}]|\}|$)/gi, filterPath1)
-          .replace(/return true\s*([;}]|\}|$)/gi, filterPath2)
-          .replace(/return!0([;}]|\}|$)/gi, filterPath2)
-          .replace(/return ([^;}]+?)\s*([;}]|$)/gi,
-          "{ if ($1) { _retval[_idx++] = $item$; }; continue _coreloop; }$2");
+          .replace(/return false[;}]/gi, "{ continue _coreloop; }")
+          .replace(/return true[;}]/gi, "{ _retval[_idx++] = $item$; continue _coreloop; }")
+          .replace(/return ([^;}]+?);/gi,
+          "{ if ($1) { _retval[_idx++] = $item$; }; continue _coreloop; }");
 
       // This preserves the function template code after JS compression,
       // so that replace() commands still work as expected.
@@ -685,16 +509,11 @@
     function compileFilterWithCaching() {
       var filterInfo = getFunctionInfo(filter);
 
-      var filterPath1 = "{ continue _coreloop; }$1";
-      var filterPath2 = "{ _cache[_i] = true;_retval[_idx++] = $item$; continue _coreloop; }$1";
-      // make some allowances for minification - there's only so far we can go with RegEx
       var filterBody = filterInfo.body
-          .replace(/return false\s*([;}]|\}|$)/gi, filterPath1)
-          .replace(/return!1([;}]|\}|$)/gi, filterPath1)
-          .replace(/return true\s*([;}]|\}|$)/gi, filterPath2)
-          .replace(/return!0([;}]|\}|$)/gi, filterPath2)
-          .replace(/return ([^;}]+?)\s*([;}]|$)/gi,
-          "{ if ((_cache[_i] = $1)) { _retval[_idx++] = $item$; }; continue _coreloop; }$2");
+          .replace(/return false[;}]/gi, "{ continue _coreloop; }")
+          .replace(/return true[;}]/gi, "{ _cache[_i] = true;_retval[_idx++] = $item$; continue _coreloop; }")
+          .replace(/return ([^;}]+?);/gi,
+          "{ if ((_cache[_i] = $1)) { _retval[_idx++] = $item$; }; continue _coreloop; }");
 
       // This preserves the function template code after JS compression,
       // so that replace() commands still work as expected.
@@ -805,10 +624,11 @@
           item = newRows[i];
           r = rows[i];
 
-          if ((groupingInfos.length && (eitherIsNonData = (item.__nonDataRow) || (r.__nonDataRow)) &&
+          if ((groupingGetter && (eitherIsNonData = (item.__nonDataRow) || (r.__nonDataRow)) &&
               item.__group !== r.__group ||
+              item.__updated ||
               item.__group && !item.equals(r))
-              || (eitherIsNonData &&
+              || (aggregators && eitherIsNonData &&
               // no good way to compare totals since they are arbitrary DTOs
               // deep object comparison is pretty expensive
               // always considering them 'dirty' seems easier for the time being
@@ -836,10 +656,14 @@
       var newRows = filteredItems.rows;
 
       groups = [];
-      if (groupingInfos.length) {
+      if (groupingGetter != null) {
         groups = extractGroups(newRows);
         if (groups.length) {
-          addTotals(groups);
+          finalizeGroups(groups);
+          if (aggregators) {
+            calculateTotals(groups);
+          }
+          groups.sort(groupingComparer);
           newRows = flattenGroupedRows(groups);
         }
       }
@@ -872,62 +696,28 @@
       prevRefreshHints = refreshHints;
       refreshHints = {};
 
-      if (totalRowsBefore !== totalRows) {
+      if (totalRowsBefore != totalRows) {
         onPagingInfoChanged.notify(getPagingInfo(), null, self);
       }
-      if (countBefore !== rows.length) {
-        onRowCountChanged.notify({previous: countBefore, current: rows.length, dataView: self}, null, self);
+      if (countBefore != rows.length) {
+        onRowCountChanged.notify({previous: countBefore, current: rows.length}, null, self);
       }
       if (diff.length > 0) {
-        onRowsChanged.notify({rows: diff, dataView: self}, null, self);
+        onRowsChanged.notify({rows: diff}, null, self);
       }
     }
 
-    /***
-     * Wires the grid and the DataView together to keep row selection tied to item ids.
-     * This is useful since, without it, the grid only knows about rows, so if the items
-     * move around, the same rows stay selected instead of the selection moving along
-     * with the items.
-     *
-     * NOTE:  This doesn't work with cell selection model.
-     *
-     * @param grid {Slick.Grid} The grid to sync selection with.
-     * @param preserveHidden {Boolean} Whether to keep selected items that go out of the
-     *     view due to them getting filtered out.
-     * @param preserveHiddenOnSelectionChange {Boolean} Whether to keep selected items
-     *     that are currently out of the view (see preserveHidden) as selected when selection
-     *     changes.
-     * @return {Slick.Event} An event that notifies when an internal list of selected row ids
-     *     changes.  This is useful since, in combination with the above two options, it allows
-     *     access to the full list selected row ids, and not just the ones visible to the grid.
-     * @method syncGridSelection
-     */
-    function syncGridSelection(grid, preserveHidden, preserveHiddenOnSelectionChange) {
+    function syncGridSelection(grid, preserveHidden) {
       var self = this;
+      var selectedRowIds = self.mapRowsToIds(grid.getSelectedRows());;
       var inHandler;
-      var selectedRowIds = self.mapRowsToIds(grid.getSelectedRows());
-      var onSelectedRowIdsChanged = new Slick.Event();
-
-      function setSelectedRowIds(rowIds) {
-        if (selectedRowIds.join(",") == rowIds.join(",")) {
-          return;
-        }
-
-        selectedRowIds = rowIds;
-
-        onSelectedRowIdsChanged.notify({
-          "grid": grid,
-          "ids": selectedRowIds,
-          "dataView": self
-        }, new Slick.EventData(), self);
-      }
 
       function update() {
         if (selectedRowIds.length > 0) {
           inHandler = true;
           var selectedRows = self.mapIdsToRows(selectedRowIds);
           if (!preserveHidden) {
-            setSelectedRowIds(self.mapRowsToIds(selectedRows));
+            selectedRowIds = self.mapRowsToIds(selectedRows);
           }
           grid.setSelectedRows(selectedRows);
           inHandler = false;
@@ -936,22 +726,12 @@
 
       grid.onSelectedRowsChanged.subscribe(function(e, args) {
         if (inHandler) { return; }
-        var newSelectedRowIds = self.mapRowsToIds(grid.getSelectedRows());
-        if (!preserveHiddenOnSelectionChange || !grid.getOptions().multiSelect) {
-          setSelectedRowIds(newSelectedRowIds);
-        } else {
-          // keep the ones that are hidden
-          var existing = $.grep(selectedRowIds, function(id) { return self.getRowById(id) === undefined; });
-          // add the newly selected ones
-          setSelectedRowIds(existing.concat(newSelectedRowIds));
-        }
+        selectedRowIds = self.mapRowsToIds(grid.getSelectedRows());
       });
 
       this.onRowsChanged.subscribe(update);
 
       this.onRowCountChanged.subscribe(update);
-
-      return onSelectedRowIdsChanged;
     }
 
     function syncGridCellCssStyles(grid, key) {
@@ -999,7 +779,7 @@
       this.onRowCountChanged.subscribe(update);
     }
 
-    $.extend(this, {
+    return {
       // methods
       "beginUpdate": beginUpdate,
       "endUpdate": endUpdate,
@@ -1011,12 +791,8 @@
       "sort": sort,
       "fastSort": fastSort,
       "reSort": reSort,
-      "setGrouping": setGrouping,
-      "getGrouping": getGrouping,
       "groupBy": groupBy,
       "setAggregators": setAggregators,
-      "collapseAllGroups": collapseAllGroups,
-      "expandAllGroups": expandAllGroups,
       "collapseGroup": collapseGroup,
       "expandGroup": expandGroup,
       "getGroups": getGroups,
@@ -1045,7 +821,7 @@
       "onRowCountChanged": onRowCountChanged,
       "onRowsChanged": onRowsChanged,
       "onPagingInfoChanged": onPagingInfoChanged
-    });
+    };
   }
 
   function AvgAggregator(field) {
@@ -1060,7 +836,7 @@
     this.accumulate = function (item) {
       var val = item[this.field_];
       this.count_++;
-      if (val != null && val !== "" && !isNaN(val)) {
+      if (val != null && val != "" && val != NaN) {
         this.nonNullCount_++;
         this.sum_ += parseFloat(val);
       }
@@ -1085,7 +861,7 @@
 
     this.accumulate = function (item) {
       var val = item[this.field_];
-      if (val != null && val !== "" && !isNaN(val)) {
+      if (val != null && val != "" && val != NaN) {
         if (this.min_ == null || val < this.min_) {
           this.min_ = val;
         }
@@ -1109,7 +885,7 @@
 
     this.accumulate = function (item) {
       var val = item[this.field_];
-      if (val != null && val !== "" && !isNaN(val)) {
+      if (val != null && val != "" && val != NaN) {
         if (this.max_ == null || val > this.max_) {
           this.max_ = val;
         }
@@ -1133,7 +909,7 @@
 
     this.accumulate = function (item) {
       var val = item[this.field_];
-      if (val != null && val !== "" && !isNaN(val)) {
+      if (val != null && val != "" && val != NaN) {
         this.sum_ += parseFloat(val);
       }
     };
