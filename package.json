@@ -1,6 +1,6 @@
 {
-  "name": "slickgrid",
-  "version": "2.1.0-1",
+  "name": "bd-slickgrid",
+  "version": "0.0.0",
   "description": "A lightning fast JavaScript grid/spreadsheet",
   "main": "./index.js",
   "directories": {
@@ -9,13 +9,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/shtylman/SlickGrid.git"
+    "url": "https://github.com/benjaminRomano/bd-SlickGrid.git"
   },
   "keywords": [
     "slickgrid",
     "grid"
   ],
-  "author": "Michael Leibman <michael.leibman@gmail.com>",
+  "author": "Benjamin Romano <bromano2100@gmail.com>",
   "license": "MIT",
   "readmeFilename": "README.md"
 }

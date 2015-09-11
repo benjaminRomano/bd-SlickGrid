@@ -1,3 +1,5 @@
+Fork of mleibman's slickgrid node package. Removes usage of jquery.event.drag
+
 # slickgrid
 
 For now, please check out [the wiki](https://github.com/mleibman/SlickGrid/wiki).
