@@ -16,15 +16,14 @@
     "EditorLock": EditorLock,
 
     /***
-       * A global singleton editor lock.
-       * @class GlobalEditorLock
-       * @static
-       * @constructor
-*/
-    "GlobalEditorLock": new EditorLock()
+    * A global singleton editor lock.
+    * @class GlobalEditorLock
+    * @static
+    * @constructor
+    */
+    "GlobalEditorLock": new EditorLock(),
   };
 
-  // register namespace
   $.extend(true, window, {
     "Slick": {
       "Event": Event,
@@ -42,7 +41,24 @@
        * @static
        * @constructor
        */
-      "GlobalEditorLock": new EditorLock()
+      "GlobalEditorLock": new EditorLock(),
+
+      "keyCode": {
+        BACKSPACE: 8,
+        DELETE: 46,
+        DOWN: 40,
+        END: 35,
+        ENTER: 13,
+        ESCAPE: 27,
+        HOME: 36,
+        INSERT: 45,
+        LEFT: 37,
+        PAGE_DOWN: 34,
+        PAGE_UP: 33,
+        RIGHT: 39,
+        TAB: 9,
+        UP: 38
+      }
     }
   });
 
@@ -290,7 +306,13 @@
    */
   function Group() {
     this.__group = true;
-    this.__updated = false;
+
+    /**
+     * Grouping level, starting with 0.
+     * @property level
+     * @type {Number}
+     */
+    this.level = 0;
 
     /***
      * Number of rows in the group.
@@ -326,6 +348,28 @@
      * @type {GroupTotals}
      */
     this.totals = null;
+
+    /**
+     * Rows that are part of the group.
+     * @property rows
+     * @type {Array}
+     */
+    this.rows = [];
+
+    /**
+     * Sub-groups that are part of the group.
+     * @property groups
+     * @type {Array}
+     */
+    this.groups = null;
+
+    /**
+     * A unique key used to identify the group.  This key can be used in calls to DataView
+     * collapseGroup() or expandGroup().
+     * @property groupingKey
+     * @type {Object}
+     */
+    this.groupingKey = null;
   }
 
   Group.prototype = new NonDataItem();
@@ -339,7 +383,8 @@
   Group.prototype.equals = function (group) {
     return this.value === group.value &&
         this.count === group.count &&
-        this.collapsed === group.collapsed;
+        this.collapsed === group.collapsed &&
+        this.title === group.title;
   };
 
   /***
@@ -360,6 +405,14 @@
      * @type {Group}
      */
     this.group = null;
+
+    /***
+     * Whether the totals have been fully initialized / calculated.
+     * Will be set to false for lazy-calculated group totals.
+     * @param initialized
+     * @type {Boolean}
+     */
+    this.initialized = false;
   }
 
   GroupTotals.prototype = new NonDataItem();
@@ -445,5 +498,3 @@
     };
   }
 })(jQuery);
-
-
